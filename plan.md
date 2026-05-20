@@ -15,21 +15,21 @@ Renovate rules are preventive — they stop bad merge requests from being opened
 **[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — `pipelines/full-container.yaml` and `pipelines/disk-image-container.yaml`:
 - Add `ea-build` string parameter (default `"false"`). We use `ea-build` rather than `skip-ea-check` or `allow-ea-images` because it describes a fact about the build ("this is an EA build") rather than a permission or action. This makes it harder to misuse as a workaround — setting `ea-build: "true"` on a GA branch would be a factual lie, not just flipping a switch.
 - Add `check-ea-images` task, gated by `when: ea-build in ["false"]` and `skip-checks in ["false"]` (same pattern as the existing [`deprecated-base-image-check`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/blob/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/pipelines/full-container.yaml#L375-396) task)
-- Task clones source (workspace already available), runs the repo's `has-ea-images` script, fails if it exits 0 (EA images found)
+- Task clones source (workspace already available), runs the repo's `ci-scripts/has-ea-images` script, fails if it exits 0 (EA images found)
 
 **[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — new [`tasks/check-ea-images.yaml`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/tree/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/tasks):
-- Receives the source workspace only — no parameters about conf file paths or image key names. The repo's `has-ea-images` script owns all of that.
-- Looks for `has-ea-images` in the repo root. If the script is not present, the task passes silently — repos opt in to the check by shipping the script. This keeps the rollout safe: the pipeline change can merge before every repo has added its script, and repos that don't use EA images at all never need to add one.
+- Receives the source workspace only — no parameters about conf file paths or image key names. The repo's `ci-scripts/has-ea-images` script owns all of that.
+- Looks for `ci-scripts/has-ea-images` in the repo. If the script is not present, the task passes silently — repos opt in to the check by shipping the script. This keeps the rollout safe: the pipeline change can merge before every repo has added its script, and repos that don't use EA images at all never need to add one.
 - Description: "Runs the repo's has-ea-images script and fails the build if EA image references are found in the build configuration."
 - Uses a lightweight image (e.g. `registry.access.redhat.com/ubi9-minimal`)
 - Fails with a clear error message listing which images matched
 
-**[rhaiis/containers](https://gitlab.com/redhat/rhel-ai/rhaiis/containers)** — new `has-ea-images` script:
+**[rhaiis/containers](https://gitlab.com/redhat/rhel-ai/rhaiis/containers)** — new `ci-scripts/has-ea-images` script:
 - Parses [`build-args/*.conf`](https://gitlab.com/redhat/rhel-ai/rhaiis/containers/-/blob/f9e768a501322e57a3d6880b7784c2d6e22a18b4/build-args/cuda-ubi9.conf) files
 - Greps image values (`BASE_IMAGE=`) for `-ea.` in the tag
 - Exits 0 if EA images found, 1 if clean
 
-**[containers/bootc](https://gitlab.com/redhat/rhel-ai/containers/bootc)** — new `has-ea-images` script:
+**[containers/bootc](https://gitlab.com/redhat/rhel-ai/containers/bootc)** — new `ci-scripts/has-ea-images` script (alongside existing [`ci-scripts/check-bib-versions.sh`](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/blob/26934ab380776e843bdf6c95a5a52c9e952bd5d5/ci-scripts/check-bib-versions.sh)):
 - Parses [`argfile-*.conf`](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/blob/26934ab380776e843bdf6c95a5a52c9e952bd5d5/argfile-cuda.conf) files
 - Greps image values (`BASE_IMAGE=`, `VLLM_IMAGE=`, `MODEL_OPT_IMAGE=`) for `-ea.` in the tag
 - Exits 0 if EA images found, 1 if clean
@@ -77,9 +77,9 @@ Renovate rules are preventive — they stop bad merge requests from being opened
 | konflux-data | `pipelines/full-container.yaml` | Add `ea-build` param, wire `check-ea-images` task |
 | konflux-data | `pipelines/disk-image-container.yaml` | Same |
 | konflux-data | `tasks/check-ea-images.yaml` | New task definition |
-| rhaiis/containers | `has-ea-images` | New script |
+| rhaiis/containers | `ci-scripts/has-ea-images` | New script |
 | rhaiis/containers | `renovate.json` | Add EA blocking packageRule |
-| containers/bootc | `has-ea-images` | New script |
+| containers/bootc | `ci-scripts/has-ea-images` | New script |
 | containers/bootc | `renovate.json` | Add EA blocking packageRule |
 | aipcc-product-management-configs | EA branch config files | Add `extra_params` for `ea-build` |
 
@@ -95,7 +95,7 @@ Renovate rules are preventive — they stop bad merge requests from being opened
 
 This order avoids breaking EA builds while progressively adding protection to GA builds:
 
-1. Merge `has-ea-images` scripts into rhaiis/containers and containers/bootc first (no effect until pipeline calls them)
+1. Merge `ci-scripts/has-ea-images` scripts into rhaiis/containers and containers/bootc first (no effect until pipeline calls them)
 2. Merge Renovate rule changes (immediately prevents new EA bumps on GA branches)
 3. Merge aipcc-product-management-configs changes and regenerate PipelineRuns (adds `ea-build: "true"` to EA branch PipelineRuns — no effect yet since the pipeline doesn't read it)
 4. Merge konflux-data pipeline + task changes last (activates the build-time check — by this point EA branches already have `ea-build: "true"` so they skip the check cleanly)

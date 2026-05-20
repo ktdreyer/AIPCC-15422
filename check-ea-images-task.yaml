@@ -22,12 +22,12 @@ spec:
         # Repos opt in to this check by shipping an executable
         # has-ea-images script. Repos without the script pass
         # silently, so this task is safe to enable globally.
-        if [ ! -x ./has-ea-images ]; then
-          echo "No has-ea-images script found, skipping check"
+        if [ ! -x ./ci-scripts/has-ea-images ]; then
+          echo "No ci-scripts/has-ea-images script found, skipping check"
           exit 0
         fi
 
-        if ./has-ea-images; then
+        if ./ci-scripts/has-ea-images; then
           echo "ERROR: EA image references found in build configuration"
           exit 1
         fi
