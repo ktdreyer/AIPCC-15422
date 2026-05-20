@@ -2,7 +2,11 @@
 - name: ea-build
   type: string
   default: "false"
-  description: Whether this is an Early Access build
+  description: >-
+    Whether this is an Early Access build. Set to "true" in
+    EA PipelineRuns via extra_params in product configs.
+    Defaults to "false" so GA builds get the EA image check
+    without any configuration.
 
 # Add this task entry alongside deprecated-base-image-check:
 - name: check-ea-images
@@ -16,8 +20,12 @@
     - name: source
       workspace: workspace
   runAfter:
+    # Run right after clone so we fail fast, before the
+    # expensive multi-platform container build starts.
     - clone-repository
   when:
+    # Only check on non-EA builds. EA builds are expected to
+    # reference EA images.
     - input: $(params.ea-build)
       operator: in
       values:
