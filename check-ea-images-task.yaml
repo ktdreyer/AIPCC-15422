@@ -6,6 +6,8 @@ spec:
   description: >-
     Runs the repo's has-ea-images script and fails the build
     if EA image references are found in the build configuration.
+
+    Use this to fail early on GA branches that should *not* use EA images.
   params:
     - name: build-args-file
       type: string
