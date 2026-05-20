@@ -1,0 +1,30 @@
+# Add this parameter to the pipeline's params list:
+- name: ea-build
+  type: string
+  default: "false"
+  description: Whether this is an Early Access build
+
+# Add this task entry alongside deprecated-base-image-check:
+- name: check-ea-images
+  description: >-
+    Runs the repo's has-ea-images script and fails the build
+    if EA image references are found in the build configuration.
+  params:
+    - name: build-args-file
+      value: $(params.build-args-file)
+  workspaces:
+    - name: source
+      workspace: workspace
+  runAfter:
+    - clone-repository
+  when:
+    - input: $(params.ea-build)
+      operator: in
+      values:
+        - "false"
+    - input: $(params.skip-checks)
+      operator: in
+      values:
+        - "false"
+  taskRef:
+    name: check-ea-images

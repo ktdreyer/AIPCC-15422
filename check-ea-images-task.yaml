@@ -1,0 +1,33 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: check-ea-images
+spec:
+  description: >-
+    Runs the repo's has-ea-images script and fails the build
+    if EA image references are found in the build configuration.
+  params:
+    - name: build-args-file
+      type: string
+      default: ""
+      description: Path to the build arguments file
+  workspaces:
+    - name: source
+      description: Workspace containing the source code
+  steps:
+    - name: check
+      image: registry.access.redhat.com/ubi9-minimal:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        if [ ! -x ./has-ea-images ]; then
+          echo "No has-ea-images script found, skipping check"
+          exit 0
+        fi
+
+        if ./has-ea-images; then
+          echo "ERROR: EA image references found in build configuration"
+          exit 1
+        fi
