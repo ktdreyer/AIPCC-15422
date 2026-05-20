@@ -1,4 +1,4 @@
-# AIPCC-15422: Non-EA branches must not use EA image versions
+# [AIPCC-15422](https://redhat.atlassian.net/browse/AIPCC-15422): Non-EA branches must not use EA image versions
 
 ## Context
 
@@ -8,36 +8,36 @@ EA (Early Access) image versions can accidentally end up in GA (Generally Availa
 
 ### Layer 1: Tekton pipeline check (4 repos)
 
-**konflux-data** — `pipelines/full-container.yaml` and `pipelines/disk-image-container.yaml`:
+**[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — `pipelines/full-container.yaml` and `pipelines/disk-image-container.yaml`:
 - Add `ea-build` string parameter (default `"false"`)
-- Add `check-ea-images` task, gated by `when: ea-build in ["false"]` and `skip-checks in ["false"]`
+- Add `check-ea-images` task, gated by `when: ea-build in ["false"]` and `skip-checks in ["false"]` (same pattern as the existing [`deprecated-base-image-check`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/blob/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/pipelines/full-container.yaml#L375-396) task)
 - Task clones source (workspace already available), runs the repo's `has-ea-images` script, fails if it exits 0 (EA images found)
 
-**konflux-data** — new `tasks/check-ea-images.yaml`:
+**[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — new [`tasks/check-ea-images.yaml`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/tree/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/tasks):
 - Receives the source workspace and `build-args-file` parameter
 - Runs `has-ea-images` from the repo root
 - Description: "Runs the repo's has-ea-images script and fails the build if EA image references are found in the build configuration."
 - Uses a lightweight image (e.g. `registry.access.redhat.com/ubi9-minimal`)
 - Fails with a clear error message listing which images matched
 
-**rhaiis/containers** — new `has-ea-images` script:
-- Parses `build-args/*.conf` files
+**[rhaiis/containers](https://gitlab.com/redhat/rhel-ai/rhaiis/containers)** — new `has-ea-images` script:
+- Parses [`build-args/*.conf`](https://gitlab.com/redhat/rhel-ai/rhaiis/containers/-/blob/f9e768a501322e57a3d6880b7784c2d6e22a18b4/build-args/cuda-ubi9.conf) files
 - Greps image values (`BASE_IMAGE=`) for `-ea.` in the tag
 - Exits 0 if EA images found, 1 if clean
 
-**containers/bootc** — new `has-ea-images` script:
-- Parses `argfile-*.conf` files
+**[containers/bootc](https://gitlab.com/redhat/rhel-ai/containers/bootc)** — new `has-ea-images` script:
+- Parses [`argfile-*.conf`](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/blob/26934ab380776e843bdf6c95a5a52c9e952bd5d5/argfile-cuda.conf) files
 - Greps image values (`BASE_IMAGE=`, `VLLM_IMAGE=`, `MODEL_OPT_IMAGE=`) for `-ea.` in the tag
 - Exits 0 if EA images found, 1 if clean
 
-**aipcc-product-management-configs** — EA branch config files:
+**[aipcc-product-management-configs](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management-configs)** — EA branch config files:
 - Add `extra_params: [{name: ea-build, value: "true"}]` to EA branch product configs
-- The existing `extra_params` mechanism in the PipelineRun Jinja template already supports this — no template changes needed
+- The existing [`extra_params` mechanism](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management/-/blob/b63baddf9d061140fa9a9afe3da26cfaa351b53e/templates/pipelinerun/full-container.yaml.j2#L99-102) in the PipelineRun Jinja template already supports this — no template changes needed
 - Regenerate PipelineRun files with `onboard-product.py`
 
 ### Layer 2: Renovate rules (2 repos)
 
-**rhaiis/containers** — `renovate.json`:
+**[rhaiis/containers](https://gitlab.com/redhat/rhel-ai/rhaiis/containers)** — [`renovate.json`](https://gitlab.com/redhat/rhel-ai/rhaiis/containers/-/blob/f9e768a501322e57a3d6880b7784c2d6e22a18b4/renovate.json):
 - Add packageRule blocking EA versions on GA branches:
   ```json
   {
@@ -48,7 +48,7 @@ EA (Early Access) image versions can accidentally end up in GA (Generally Availa
   }
   ```
 
-**containers/bootc** — `renovate.json`:
+**[containers/bootc](https://gitlab.com/redhat/rhel-ai/containers/bootc)** — [`renovate.json`](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/blob/26934ab380776e843bdf6c95a5a52c9e952bd5d5/renovate.json):
 - Add equivalent packageRule:
   ```json
   {
