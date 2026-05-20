@@ -18,7 +18,7 @@ Renovate rules are preventive — they stop bad merge requests from being opened
 - Task clones source (workspace already available), runs the repo's `has-ea-images` script, fails if it exits 0 (EA images found)
 
 **[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — new [`tasks/check-ea-images.yaml`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/tree/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/tasks):
-- Receives the source workspace and `build-args-file` parameter
+- Receives the source workspace only — no parameters about conf file paths or image key names. The repo's `has-ea-images` script owns all of that.
 - Looks for `has-ea-images` in the repo root. If the script is not present, the task passes silently — repos opt in to the check by shipping the script. This keeps the rollout safe: the pipeline change can merge before every repo has added its script, and repos that don't use EA images at all never need to add one.
 - Description: "Runs the repo's has-ea-images script and fails the build if EA image references are found in the build configuration."
 - Uses a lightweight image (e.g. `registry.access.redhat.com/ubi9-minimal`)

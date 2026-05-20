@@ -8,14 +8,6 @@ spec:
     if EA image references are found in the build configuration.
 
     Use this to fail early on GA branches that should *not* use EA images.
-  params:
-    - name: build-args-file
-      type: string
-      default: ""
-      description: >-
-        Path to the build arguments file (e.g. build-args/cuda-ubi9.conf).
-        Passed through to the repo's has-ea-images script as an environment
-        variable so it can narrow its search if needed.
   workspaces:
     - name: source
       description: Workspace containing the source code (cloned by clone-repository)
@@ -23,9 +15,6 @@ spec:
     - name: check
       image: registry.access.redhat.com/ubi9-minimal:latest
       workingDir: $(workspaces.source.path)
-      env:
-        - name: BUILD_ARGS_FILE
-          value: $(params.build-args-file)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
