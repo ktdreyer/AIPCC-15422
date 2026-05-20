@@ -6,10 +6,14 @@ EA (Early Access) image versions can accidentally end up in GA (Generally Availa
 
 ## Approach
 
+### Why two layers?
+
+Renovate rules are preventive — they stop bad merge requests from being opened. But they only cover automated dependency bumps. A developer could manually edit a conf file and introduce an EA image reference. The pipeline check catches everything at build time regardless of how the EA reference got there. Neither layer alone is sufficient.
+
 ### Layer 1: Tekton pipeline check (4 repos)
 
 **[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — `pipelines/full-container.yaml` and `pipelines/disk-image-container.yaml`:
-- Add `ea-build` string parameter (default `"false"`)
+- Add `ea-build` string parameter (default `"false"`). We use `ea-build` rather than `skip-ea-check` or `allow-ea-images` because it describes a fact about the build ("this is an EA build") rather than a permission or action. This makes it harder to misuse as a workaround — setting `ea-build: "true"` on a GA branch would be a factual lie, not just flipping a switch.
 - Add `check-ea-images` task, gated by `when: ea-build in ["false"]` and `skip-checks in ["false"]` (same pattern as the existing [`deprecated-base-image-check`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/blob/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/pipelines/full-container.yaml#L375-396) task)
 - Task clones source (workspace already available), runs the repo's `has-ea-images` script, fails if it exits 0 (EA images found)
 
@@ -30,10 +34,16 @@ EA (Early Access) image versions can accidentally end up in GA (Generally Availa
 - Greps image values (`BASE_IMAGE=`, `VLLM_IMAGE=`, `MODEL_OPT_IMAGE=`) for `-ea.` in the tag
 - Exits 0 if EA images found, 1 if clean
 
+**Why per-repo scripts instead of a generic task?** Each container repo has its own conf file format and image key names. For example, rhaiis/containers uses `build-args/cuda-ubi9.conf` with a single `BASE_IMAGE` key, while containers/bootc uses `argfile-cuda.conf` with `BASE_IMAGE`, `VLLM_IMAGE`, and `MODEL_OPT_IMAGE`. If we put this parsing logic in the shared Tekton task in konflux-data, it would need to hard-code these details — and when rhaiis adds a new image key or bootc renames a conf file, the shared task would silently miss the new references. With per-repo scripts, each repo owns its detection logic and can update it alongside the conf file changes in the same merge request.
+
 **[aipcc-product-management-configs](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management-configs)** — EA branch config files:
 - Add `extra_params: [{name: ea-build, value: "true"}]` to EA branch product configs
 - The existing [`extra_params` mechanism](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management/-/blob/b63baddf9d061140fa9a9afe3da26cfaa351b53e/templates/pipelinerun/full-container.yaml.j2#L99-102) in the PipelineRun Jinja template already supports this — no template changes needed
 - Regenerate PipelineRun files with `onboard-product.py`
+
+**Why `extra_params` instead of a new template variable?** The Jinja template already iterates over `extra_params` and emits arbitrary pipeline parameters. Adding `ea-build` this way requires zero template code changes — just a config data change in the product YAML files. This also avoids the need to modify `onboard-product.py` itself.
+
+**Why not pass `target-branch` instead of `ea-build`?** The pipeline is deliberately branch-agnostic by design: branch decisions happen at the PipelineRun trigger layer (via CEL expressions), and the pipeline only receives a commit SHA. Adding `target-branch` as a pipeline parameter would break this separation. The `ea-build` boolean lets the PipelineRun declare what kind of build this is without leaking branch semantics into the shared pipeline.
 
 ### Layer 2: Renovate rules (2 repos)
 
@@ -58,7 +68,7 @@ EA (Early Access) image versions can accidentally end up in GA (Generally Availa
     "allowedVersions": "/^(?!.*-ea\\.).*$/"
   }
   ```
-- Uses regex for `matchBaseBranches` to match the existing `baseBranchPatterns` style in this repo
+- Uses regex for `matchBaseBranches` to match the existing `baseBranchPatterns` style in this repo (bootc uses regex patterns rather than explicit branch lists, so the Renovate rule follows suit)
 
 ## Files to modify
 
@@ -83,7 +93,9 @@ EA (Early Access) image versions can accidentally end up in GA (Generally Availa
 
 ## Rollout order
 
+This order avoids breaking EA builds while progressively adding protection to GA builds:
+
 1. Merge `has-ea-images` scripts into rhaiis/containers and containers/bootc first (no effect until pipeline calls them)
 2. Merge Renovate rule changes (immediately prevents new EA bumps on GA branches)
-3. Merge konflux-data pipeline + task changes (activates the build-time check)
-4. Merge aipcc-product-management-configs changes and regenerate PipelineRuns (enables EA branches to skip the check)
+3. Merge aipcc-product-management-configs changes and regenerate PipelineRuns (adds `ea-build: "true"` to EA branch PipelineRuns — no effect yet since the pipeline doesn't read it)
+4. Merge konflux-data pipeline + task changes last (activates the build-time check — by this point EA branches already have `ea-build: "true"` so they skip the check cleanly)
