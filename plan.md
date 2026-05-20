@@ -95,7 +95,7 @@ Renovate rules are preventive — they stop bad merge requests from being opened
 
 This order avoids breaking EA builds while progressively adding protection to GA builds:
 
-1. Merge `ci-scripts/assert-no-ea-images` scripts into rhaiis/containers and containers/bootc first (no effect until pipeline calls them)
+1. Merge `ci-scripts/assert-no-ea-images` scripts into rhaiis/containers and containers/bootc first (no effect until pipeline calls them) — [bootc draft MR](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/merge_requests/409)
 2. Merge Renovate rule changes (immediately prevents new EA bumps on GA branches)
 3. Merge aipcc-product-management-configs changes and regenerate PipelineRuns (adds `ea-build: "true"` to EA branch PipelineRuns — no effect yet since the pipeline doesn't read it)
 4. Merge konflux-data pipeline + task changes last (activates the build-time check — by this point EA branches already have `ea-build: "true"` so they skip the check cleanly)
