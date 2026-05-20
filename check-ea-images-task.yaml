@@ -4,7 +4,7 @@ metadata:
   name: check-ea-images
 spec:
   description: >-
-    Runs the repo's has-ea-images script and fails the build
+    Runs the repo's assert-no-ea-images script and fails the build
     if EA image references are found in the build configuration.
 
     Use this to fail early on GA branches that should *not* use EA images.
@@ -20,14 +20,11 @@ spec:
         set -euo pipefail
 
         # Repos opt in to this check by shipping an executable
-        # has-ea-images script. Repos without the script pass
-        # silently, so this task is safe to enable globally.
-        if [ ! -x ./ci-scripts/has-ea-images ]; then
-          echo "No ci-scripts/has-ea-images script found, skipping check"
+        # assert-no-ea-images script. Repos without the script
+        # pass silently, so this task is safe to enable globally.
+        if [ ! -x ./ci-scripts/assert-no-ea-images ]; then
+          echo "No ci-scripts/assert-no-ea-images script found, skipping check"
           exit 0
         fi
 
-        if ./ci-scripts/has-ea-images; then
-          echo "ERROR: EA image references found in build configuration"
-          exit 1
-        fi
+        ./ci-scripts/assert-no-ea-images
