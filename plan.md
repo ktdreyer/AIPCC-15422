@@ -10,38 +10,37 @@ EA (Early Access) image versions can accidentally end up in GA (Generally Availa
 
 Renovate rules are preventive — they stop bad merge requests from being opened. But they only cover automated dependency bumps. A developer could manually edit a conf file and introduce an EA image reference. The pipeline check catches everything at build time regardless of how the EA reference got there. Neither layer alone is sufficient.
 
-### Layer 1: Tekton pipeline check (4 repos)
+### Layer 1: Tekton pipeline check (3 repos)
 
-**[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — `pipelines/full-container.yaml` and `pipelines/disk-image-container.yaml`:
-- Add `ea-build` string parameter (default `"false"`). We use `ea-build` rather than `skip-ea-check` or `allow-ea-images` because it describes a fact about the build ("this is an EA build") rather than a permission or action. This makes it harder to misuse as a workaround — setting `ea-build: "true"` on a GA branch would be a factual lie, not just flipping a switch.
-- Add `check-ea-images` task, gated by `when: ea-build in ["false"]` and `skip-checks in ["false"]` (same pattern as the existing [`deprecated-base-image-check`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/blob/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/pipelines/full-container.yaml#L375-396) task)
-- Task clones source (workspace already available), runs the repo's `ci-scripts/assert-no-ea-images` script — the script exits 0 if all images are GA, or exits 1 if any EA image is found
+**[toolbox](https://gitlab.com/redhat/rhel-ai/ci-cd/toolbox)** — new `scripts/assert-no-ea-build-args.sh`:
+- A generic script that accepts one or more conf file paths as arguments
+- Parses all `KEY=VALUE` lines (skipping comments and blanks)
+- Checks all values for the `-ea.` pattern (case-insensitive) — no need to hard-code which keys contain images
+- Exits 0 if no EA references found, exits 1 with a listing of which keys matched
+- Ships in the [toolbox container image](https://gitlab.com/redhat/rhel-ai/ci-cd/toolbox/-/blob/main/Containerfile) automatically via the existing `COPY --chmod=755 scripts/*.sh /opt/toolbox/scripts/` and `$PATH` setup
 
-**[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — new [`tasks/check-ea-images.yaml`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/tree/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/tasks):
-- Receives the source workspace only — no parameters about conf file paths or image key names. The repo's `ci-scripts/assert-no-ea-images` script owns all of that.
-- Looks for `ci-scripts/assert-no-ea-images` in the repo. If the script is not present, the task passes silently — repos opt in to the check by shipping the script. This keeps the rollout safe: the pipeline change can merge before every repo has added its script, and repos that don't use EA images at all never need to add one.
-- Description: "Runs the repo's assert-no-ea-images script and fails the build if EA image references are found in the build configuration."
-- Uses a lightweight image (e.g. `registry.access.redhat.com/ubi9-minimal`)
-- Fails with a clear error message listing which images matched
+**Why check all values instead of specific key names?** Each container repo has different key names (`BASE_IMAGE`, `VLLM_IMAGE`, `MODEL_OPT_IMAGE`, etc.) and can add new ones at any time. Grepping for specific names like `*IMAGE*` is fragile. Checking all values is simpler and more robust — the `-ea.` pattern matches EA image tags (e.g. `3.4.0-ea.1-1777444689`) but does not match non-image values like version IDs (`3.5-EA1` has no dot after "EA"), hostnames (`redhat.com`), or plain numbers.
 
-**[rhaiis/containers](https://gitlab.com/redhat/rhel-ai/rhaiis/containers)** — new `ci-scripts/assert-no-ea-images` script:
-- Parses [`build-args/*.conf`](https://gitlab.com/redhat/rhel-ai/rhaiis/containers/-/blob/f9e768a501322e57a3d6880b7784c2d6e22a18b4/build-args/cuda-ubi9.conf) files
-- Greps image values (`BASE_IMAGE=`) for `-ea.` in the tag (case-insensitive)
-- Exits 0 if all images are GA, 1 if any EA image is found
+**Why toolbox instead of per-repo scripts?** [Team feedback](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/merge_requests/409#note_2596100037): CI helper scripts should live in a centralized, CI-focused repo so they're maintained in one place and work across any CI system (Tekton, GitLab CI, GitHub Actions). The toolbox image is already used for CI utilities and bakes scripts into `$PATH`. This avoids duplicating the same logic across rhaiis/containers and containers/bootc.
 
-**[containers/bootc](https://gitlab.com/redhat/rhel-ai/containers/bootc)** — new `ci-scripts/assert-no-ea-images` script (alongside existing [`ci-scripts/check-bib-versions.sh`](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/blob/26934ab380776e843bdf6c95a5a52c9e952bd5d5/ci-scripts/check-bib-versions.sh)):
-- Parses [`argfile-*.conf`](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/blob/26934ab380776e843bdf6c95a5a52c9e952bd5d5/argfile-cuda.conf) files
-- Greps image values (`BASE_IMAGE=`, `VLLM_IMAGE=`, `MODEL_OPT_IMAGE=`) for `-ea.` in the tag (case-insensitive)
-- Exits 0 if all images are GA, 1 if any EA image is found
+**[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — new [`tasks/check-ea-images.yaml`](check-ea-images-task.yaml):
+- Uses the toolbox container image
+- Receives a `BUILD_ARGS_FILE` param — forwarded from the pipeline's existing `build-args-file` parameter that every PipelineRun already sets (e.g. `build-args/cuda-ubi9.conf`, `argfile-cuda.conf`)
+- Runs `assert-no-ea-build-args.sh` against that file
+- If the file is empty or not found, passes silently
 
-**Why per-repo scripts instead of a generic task?** Each container repo has its own conf file format and image key names. For example, rhaiis/containers uses `build-args/cuda-ubi9.conf` with a single `BASE_IMAGE` key, while containers/bootc uses `argfile-cuda.conf` with `BASE_IMAGE`, `VLLM_IMAGE`, and `MODEL_OPT_IMAGE`. If we put this parsing logic in the shared Tekton task in konflux-data, it would need to hard-code these details — and when rhaiis adds a new image key or bootc renames a conf file, the shared task would silently miss the new references. With per-repo scripts, each repo owns its detection logic and can update it alongside the conf file changes in the same merge request.
+**[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — `pipelines/full-container.yaml` and `pipelines/disk-image-container.yaml` ([snippet](pipeline-snippet.yaml)):
+- Add `ea-build` string parameter (default `"false"`)
+- Add `check-ea-images` task that forwards the existing `$(params.build-args-file)` to the task — no new parameters needed per component since every PipelineRun already sets `build-args-file`
+- Gated by `when: ea-build in ["false"]` and `skip-checks in ["false"]` (same style as the existing [`deprecated-base-image-check`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/blob/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/pipelines/full-container.yaml#L375-396) task)
+- Runs after `clone-repository` so it fails fast before the expensive multi-platform container build starts
+
+We use `ea-build` rather than `skip-ea-check` or `allow-ea-images` because it describes a fact about the build ("this is an EA build") rather than a permission or action. This makes it harder to misuse as a workaround — setting `ea-build: "true"` on a GA branch would be a factual lie, not just flipping a switch.
 
 **[aipcc-product-management-configs](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management-configs)** — EA branch config files:
 - Add `extra_params: [{name: ea-build, value: "true"}]` to EA branch product configs
 - The existing [`extra_params` mechanism](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management/-/blob/b63baddf9d061140fa9a9afe3da26cfaa351b53e/templates/pipelinerun/full-container.yaml.j2#L99-102) in the PipelineRun Jinja template already supports this — no template changes needed
 - Regenerate PipelineRun files with `onboard-product.py`
-
-**Why `extra_params` instead of a new template variable?** The Jinja template already iterates over `extra_params` and emits arbitrary pipeline parameters. Adding `ea-build` this way requires zero template code changes — just a config data change in the product YAML files. This also avoids the need to modify `onboard-product.py` itself.
 
 **Why not pass `target-branch` instead of `ea-build`?** The pipeline is deliberately branch-agnostic by design: branch decisions happen at the PipelineRun trigger layer (via CEL expressions), and the pipeline only receives a commit SHA. Adding `target-branch` as a pipeline parameter would break this separation. The `ea-build` boolean lets the PipelineRun declare what kind of build this is without leaking branch semantics into the shared pipeline.
 
@@ -74,18 +73,17 @@ Renovate rules are preventive — they stop bad merge requests from being opened
 
 | Repo | File | Change |
 |------|------|--------|
-| konflux-data | `pipelines/full-container.yaml` | Add `ea-build` param, wire `check-ea-images` task |
+| toolbox | `scripts/assert-no-ea-build-args.sh` | New script |
+| konflux-data | `tasks/check-ea-images.yaml` | New task definition (uses toolbox image) |
+| konflux-data | `pipelines/full-container.yaml` | Add `ea-build` param, wire `check-ea-images` task with existing `build-args-file` |
 | konflux-data | `pipelines/disk-image-container.yaml` | Same |
-| konflux-data | `tasks/check-ea-images.yaml` | New task definition |
-| rhaiis/containers | `ci-scripts/assert-no-ea-images` | New script |
-| rhaiis/containers | `renovate.json` | Add EA blocking packageRule |
-| containers/bootc | `ci-scripts/assert-no-ea-images` | New script |
-| containers/bootc | `renovate.json` | Add EA blocking packageRule |
 | aipcc-product-management-configs | EA branch config files | Add `extra_params` for `ea-build` |
+| rhaiis/containers | `renovate.json` | Add EA blocking packageRule |
+| containers/bootc | `renovate.json` | Add EA blocking packageRule |
 
 ## Verification
 
-1. **assert-no-ea-images scripts**: Test locally by running against current conf files (should exit 1 on GA branches since they use GA images)
+1. **assert-no-ea-build-args.sh**: Test locally against current conf files in both repos — should pass on GA values, should catch `-ea.` patterns in test data
 2. **Tekton task**: Validate YAML with `tkn task validate` or `oc apply --dry-run=client`
 3. **Pipeline changes**: Validate with `tkn pipeline validate` or dry-run
 4. **Renovate rules**: Test regex patterns against known EA version strings (e.g. `3.4.0-ea.1-1777444689` should be blocked, `3.4.0-1777444689` should pass)
@@ -93,9 +91,9 @@ Renovate rules are preventive — they stop bad merge requests from being opened
 
 ## Rollout order
 
-This order avoids breaking EA builds while progressively adding protection to GA builds:
+This order ensures the toolbox image is ready before the pipeline references it:
 
-1. Merge `ci-scripts/assert-no-ea-images` scripts into rhaiis/containers and containers/bootc first (no effect until pipeline calls them) — [bootc draft MR](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/merge_requests/409)
-2. Merge Renovate rule changes (immediately prevents new EA bumps on GA branches)
+1. Merge `scripts/assert-no-ea-build-args.sh` into toolbox — wait for Konflux to rebuild the toolbox image
+2. Merge Renovate rule changes into rhaiis/containers and containers/bootc (immediately prevents new EA bumps on GA branches)
 3. Merge aipcc-product-management-configs changes and regenerate PipelineRuns (adds `ea-build: "true"` to EA branch PipelineRuns — no effect yet since the pipeline doesn't read it)
-4. Merge konflux-data pipeline + task changes last (activates the build-time check — by this point EA branches already have `ea-build: "true"` so they skip the check cleanly)
+4. Merge konflux-data task + pipeline changes last (activates the build-time check — by this point EA branches already have `ea-build: "true"` so they skip the check cleanly)

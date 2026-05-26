@@ -10,9 +10,9 @@
 
 # Add this task entry alongside deprecated-base-image-check:
 - name: check-ea-images
-  description: >-
-    Runs the repo's has-ea-images script and fails the build
-    if EA image references are found in the build configuration.
+  params:
+    - name: BUILD_ARGS_FILE
+      value: $(params.build-args-file)
   workspaces:
     - name: source
       workspace: workspace
