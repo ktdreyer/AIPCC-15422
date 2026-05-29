@@ -1,0 +1,19 @@
+# Add "test" after "lint" in the stages list:
+stages:
+  - lint
+  - test
+
+# Add this job:
+shellspec:
+  stage: test
+  needs: []
+  image: registry.access.redhat.com/ubi9:latest
+  before_script:
+    - dnf install -y git-core
+    - curl -fsSL https://git.io/shellspec | sh -s -- --yes
+  script:
+    - ~/.local/bin/shellspec
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - "tasks/**/*"

@@ -1,7 +1,7 @@
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
-  name: check-ea-images
+  name: assert-no-ea-images
 spec:
   description: >-
     Checks a build-args conf file for EA image version references

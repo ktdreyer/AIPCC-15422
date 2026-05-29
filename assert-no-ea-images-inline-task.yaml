@@ -1,0 +1,50 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: assert-no-ea-images
+spec:
+  description: >-
+    Checks a build-args conf file for EA (Early Access) image version
+    references and fails the build if any are found. GA builds must
+    never reference EA image versions.
+  params:
+    - name: BUILD_ARGS_FILE
+      type: string
+      description: >-
+        Path to the build-args conf file to check, relative to
+        the source workspace (e.g. "build-args/cuda-ubi9.conf").
+  workspaces:
+    - name: source
+      description: Workspace containing the source code (cloned by clone-repository)
+  steps:
+    - name: check
+      image: registry.access.redhat.com/ubi9-minimal:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        FILE="$(params.BUILD_ARGS_FILE)"
+
+        if [ -z "$FILE" ]; then
+            echo "No build-args-file specified, skipping EA check."
+            exit 0
+        fi
+
+        if [ ! -f "$FILE" ]; then
+            echo "Build-args file not found: $FILE, skipping EA check."
+            exit 0
+        fi
+
+        fail=0
+        matches=$(grep -inE '^[A-Za-z_]+=.*-ea\.' "$FILE" || true)
+        if [ -n "$matches" ]; then
+            echo "ERROR: EA version references found in $FILE:"
+            echo "$matches"
+            fail=1
+        fi
+
+        if [ "$fail" -eq 0 ]; then
+            echo "No EA version references found in $FILE."
+        fi
+        exit $fail
