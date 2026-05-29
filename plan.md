@@ -67,30 +67,15 @@ We use `ea-build` rather than `skip-ea-check` or `allow-ea-images` because it de
 
 **Why not pass `target-branch` instead of `ea-build`?** The pipeline is deliberately branch-agnostic by design: branch decisions happen at the PipelineRun trigger layer (via CEL expressions), and the pipeline only receives a commit SHA. Adding `target-branch` as a pipeline parameter would break this separation. The `ea-build` boolean lets the PipelineRun declare what kind of build this is without leaking branch semantics into the shared pipeline.
 
-### Layer 2: Renovate rules (2 repos)
+### Layer 2: Renovate rules — not needed
 
-**[rhaiis/containers](https://gitlab.com/redhat/rhel-ai/rhaiis/containers)** — [`renovate.json`](https://gitlab.com/redhat/rhel-ai/rhaiis/containers/-/blob/f9e768a501322e57a3d6880b7784c2d6e22a18b4/renovate.json):
-- Add packageRule blocking EA versions on GA branches:
-  ```json
-  {
-    "description": "Block EA image versions on non-EA branches",
-    "matchPackageNames": ["/^quay\\.io\\/aipcc\\//"],
-    "matchBaseBranches": ["main", "3.0", "3.1", "3.2"],
-    "allowedVersions": "/^(?!.*-ea\\.).*$/"
-  }
-  ```
+Investigated whether we need `allowedVersions` rules to block EA image versions on GA branches. Existing guards already handle it:
 
-**[containers/bootc](https://gitlab.com/redhat/rhel-ai/containers/bootc)** — [`renovate.json`](https://gitlab.com/redhat/rhel-ai/containers/bootc/-/blob/26934ab380776e843bdf6c95a5a52c9e952bd5d5/renovate.json):
-- Add equivalent packageRule:
-  ```json
-  {
-    "description": "Block EA image versions on non-EA branches",
-    "matchPackageNames": ["quay.io/aipcc/rhaiis/**", "quay.io/aipcc/rhaiis-model-opt/**"],
-    "matchBaseBranches": ["/^main$|^\\d+\\.\\d+$/"],
-    "allowedVersions": "/^(?!.*-ea\\.).*$/"
-  }
-  ```
-- Uses regex for `matchBaseBranches` to match the existing `baseBranchPatterns` style in this repo (bootc uses regex patterns rather than explicit branch lists, so the Renovate rule follows suit)
+**[rhaiis/containers](https://gitlab.com/redhat/rhel-ai/rhaiis/containers)** — each GA branch already has per-branch `allowedVersions` patterns like `/^3\.4\.0\-[\d.]+$/`. The `[\d.]+` suffix only allows digits and dots, which naturally excludes EA tags (`-ea.` has letters).
+
+**[containers/bootc](https://gitlab.com/redhat/rhel-ai/containers/bootc)** — Renovate uses `"redhat"` versioning for RHAIIS images. The [upstream source](https://github.com/renovatebot/renovate/blob/main/lib/modules/versioning/redhat/index.ts) uses a regex that requires the release portion to be digits only: `(?:-(?<releaseMajor>\d+)(?:\.(?<releaseMinor>\d+))?)`. EA tags like `3.4.0-ea.1-1773283875` fail to parse and are silently ignored. The upstream [test suite](https://github.com/renovatebot/renovate/blob/main/lib/modules/versioning/redhat/index.spec.ts) explicitly verifies that non-numeric releases like `3.0.0-beta` are invalid, which protects this behavior. Verified against real tags from `quay.io/aipcc/rhaiis/cuda-ubi9` using the team's Renovate image (`quay.io/aipcc-cicd/renovate:43.128.1`).
+
+No MRs needed for Layer 2.
 
 ## Files to modify
 
@@ -107,8 +92,8 @@ We use `ea-build` rather than `skip-ea-check` or `allow-ea-images` because it de
 | aipcc-product-management | `onboard-product.py` | Auto-inject `ea-build: "true"` for branches containing `-ea` |
 | aipcc-product-management | `tests/test_unit.py` | Tests for `get_extra_pipelinerun_params` |
 | aipcc-product-management-configs | EA branch config files | Add `ea-build: "true"` to `params` for existing EA branches |
-| rhaiis/containers | `renovate.json` | Add EA blocking packageRule |
-| containers/bootc | `renovate.json` | Add EA blocking packageRule |
+| ~~rhaiis/containers~~ | ~~`renovate.json`~~ | ~~Not needed — existing `allowedVersions` patterns already block EA~~ |
+| ~~containers/bootc~~ | ~~`renovate.json`~~ | ~~Not needed — `"redhat"` versioning can't parse EA tags~~ |
 
 ### Approach B (toolbox image — additional files)
 
@@ -122,8 +107,7 @@ We use `ea-build` rather than `skip-ea-check` or `allow-ea-images` because it de
 1. **ShellSpec tests**: Run `shellspec` from the konflux-data repo root — 9 test cases cover empty/missing files, GA values, EA values (lowercase/uppercase), mixed files, and the `-EA1` (no dot) false-positive case
 2. **Tekton task**: Validate YAML with `tkn task validate` or `oc apply --dry-run=client`
 3. **Pipeline changes**: Validate with `tkn pipeline validate` or dry-run
-4. **Renovate rules**: Test regex patterns against known EA version strings (e.g. `3.4.0-ea.1-1777444689` should be blocked, `3.4.0-1777444689` should pass)
-5. **PipelineRun generation**: Run `onboard-product.py` with EA configs and verify `ea-build: "true"` appears in generated `.tekton/*.yaml` files; run existing tests with `uv run python -m pytest`
+4. **PipelineRun generation**: Run `onboard-product.py` with EA configs and verify `ea-build: "true"` appears in generated `.tekton/*.yaml` files; run existing tests with `uv run python -m pytest`
 
 ## Rollout order
 
@@ -132,8 +116,6 @@ We use `ea-build` rather than `skip-ea-check` or `allow-ea-images` because it de
 1. Merge aipcc-product-management change: auto-inject `ea-build` for EA branches (safe — no effect until the pipeline declares the parameter)
 2. Merge aipcc-product-management-configs: add `ea-build: "true"` to existing EA branch configs, then regenerate PipelineRuns (safe — Tekton ignores unknown PipelineRun params)
 3. Merge konflux-data MR: task YAML, ShellSpec tests, CI job, and pipeline changes (activates the check — by this point EA branches already have `ea-build: "true"`)
-4. Merge Renovate rule changes into rhaiis/containers and containers/bootc
-
 ### Approach B (toolbox — if pursuing in parallel)
 
 1. Merge toolbox MR !11 — wait for Konflux to rebuild the toolbox image
