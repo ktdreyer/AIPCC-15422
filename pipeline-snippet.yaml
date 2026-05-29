@@ -3,10 +3,8 @@
   type: string
   default: "false"
   description: >-
-    Whether this is an Early Access build. Set to "true" in
-    EA PipelineRuns via extra_params in product configs.
-    Defaults to "false" so GA builds get the EA image check
-    without any configuration.
+    Whether this is an Early Access build.
+    EA builds skip the "no EA images" assertion.
 
 # Add this task entry alongside deprecated-base-image-check:
 - name: assert-no-ea-images
