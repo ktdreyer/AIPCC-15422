@@ -1,33 +1,29 @@
 # Add this parameter to the pipeline's params list:
-- name: ea-build
+- default: "true"
+  description: Whether this is a stable release. Stable builds must not reference EA or "fast" image versions.
+  name: stable-release
   type: string
-  default: "false"
-  description: >-
-    Whether this is an Early Access build.
-    EA builds skip the "no EA images" assertion.
 
-# Add this task entry alongside deprecated-base-image-check:
-- name: assert-no-ea-images
+# Add this task entry to the pipeline:
+- name: assert-all-images-are-stable
   params:
     - name: BUILD_ARGS_FILE
       value: $(params.build-args-file)
-  workspaces:
-    - name: source
-      workspace: workspace
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
   runAfter:
-    # Run right after clone so we fail fast, before the
-    # expensive multi-platform container build starts.
     - clone-repository
   when:
-    # Only check on non-EA builds. EA builds are expected to
-    # reference EA images.
-    - input: $(params.ea-build)
+    - input: $(params.stable-release)
       operator: in
       values:
-        - "false"
-    - input: $(params.skip-checks)
-      operator: in
-      values:
-        - "false"
+        - "true"
   taskRef:
-    name: assert-no-ea-images
+    name: assert-all-images-are-stable
+
+# Add assert-all-images-are-stable to prefetch-dependencies runAfter:
+- name: prefetch-dependencies
+  # ...
+  runAfter:
+    - clone-repository
+    - assert-all-images-are-stable

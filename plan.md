@@ -17,10 +17,10 @@ This plan adds a Tekton pipeline check that catches non-stable images at build t
 
 The check script is inlined directly in the Tekton task's `script:` field, using `ubi9-minimal` as the step image. No external image dependency.
 
-**[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — new `tasks/assert-all-images-are-stable.yaml` ([MR !418](https://gitlab.com/redhat/rhel-ai/konflux-data/-/merge_requests/418), needs rename):
+**[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — new `tasks/assert-all-images-are-stable.yaml` ([MR !418](https://gitlab.com/redhat/rhel-ai/konflux-data/-/merge_requests/418)):
 - Self-contained — script is embedded in the task YAML
 - Receives a `BUILD_ARGS_FILE` param — forwarded from the pipeline's existing `build-args-file` parameter that every PipelineRun already sets (e.g. `build-args/cuda-ubi9.conf`, `argfile-cuda.conf`)
-- Greps all values for two non-stable patterns: `-ea.` (EA tags) and `.fast` (fast tags)
+- Greps all values for two non-stable patterns: `-ea.` (EA tags) and `-fast.` (fast tags)
 - If the file is empty or not found, passes silently
 - Uses `registry.access.redhat.com/ubi9-minimal:latest` — no toolbox image dependency
 
@@ -30,20 +30,21 @@ The check script is inlined directly in the Tekton task's `script:` field, using
 
 **[konflux-data](https://gitlab.com/redhat/rhel-ai/konflux-data)** — `pipelines/full-container.yaml` and `pipelines/disk-image-container.yaml`:
 - Add `stable-release` string parameter (default `"true"`)
-- Add `assert-all-images-are-stable` task that forwards the existing `$(params.build-args-file)` to the task — no new parameters needed per component since every PipelineRun already sets `build-args-file`
-- Gated by `when: stable-release in ["true"]` and `skip-checks in ["false"]` (same style as the existing [`deprecated-base-image-check`](https://gitlab.com/redhat/rhel-ai/konflux-data/-/blob/a029a2edeb91523e985b1c0fd1a4ece5b597c75f/pipelines/full-container.yaml#L375-396) task)
+- Add `assert-all-images-are-stable` task that receives `SOURCE_ARTIFACT` from `clone-repository` (Trusted Artifacts pattern) and forwards `$(params.build-args-file)` — no new parameters needed per component since every PipelineRun already sets `build-args-file`
+- Gated by `when: stable-release in ["true"]` only — independent of `skip-checks`, because skipping post-build checks (Snyk, Clair, etc.) should not also skip this pre-build safety gate
 - Runs after `clone-repository` so it fails fast before the expensive multi-platform container build starts
+- `prefetch-dependencies` has `assert-all-images-are-stable` in its `runAfter`, so a failure blocks the pipeline before the expensive build
 
 We use `stable-release` rather than `skip-stable-check` or `allow-non-stable-images` because it describes a fact about the build ("this is a stable release") rather than a permission or action. This makes it harder to misuse as a workaround — setting `stable-release: "false"` on a GA branch would be a factual lie, not just flipping a switch.
 
 **Why not pass `target-branch` instead of `stable-release`?** The pipeline is deliberately branch-agnostic by design: branch decisions happen at the PipelineRun trigger layer (via CEL expressions), and the pipeline only receives a commit SHA. Adding `target-branch` as a pipeline parameter would break this separation. The `stable-release` boolean lets the PipelineRun declare what kind of build this is without leaking branch semantics into the shared pipeline.
 
-**[aipcc-product-management](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management)** — `onboard-product.py` ([MR !49](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management/-/merge_requests/49), needs rename):
+**[aipcc-product-management](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management)** — `onboard-product.py` ([MR !49](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management/-/merge_requests/49)):
 - `get_extra_pipelinerun_params()` auto-injects `stable-release: "false"` when the branch name contains `-ea` or `-fast` (case-insensitive)
 - This is the safety net for future non-stable branches — no manual config changes needed
 - If the config already sets `stable-release` manually, the function avoids duplicating it
 
-**[aipcc-product-management-configs](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management-configs)** — non-stable branch config files ([MR !318](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management-configs/-/merge_requests/318), needs rename):
+**[aipcc-product-management-configs](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management-configs)** — non-stable branch config files ([MR !318](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management-configs/-/merge_requests/318)):
 - Add `stable-release: "false"` to the common `params` in existing EA branch configs (belt-and-suspenders with the auto-injection above)
 - The existing [`extra_params` mechanism](https://gitlab.com/redhat/rhel-ai/ci-cd/aipcc-product-management/-/blob/b63baddf9d061140fa9a9afe3da26cfaa351b53e/templates/pipelinerun/full-container.yaml.j2#L99-102) in the PipelineRun Jinja template already supports this — no template changes needed
 - Regenerate PipelineRun files with `onboard-product.py`
@@ -83,7 +84,8 @@ We considered placing the check script in the [toolbox](https://gitlab.com/redha
 1. **ShellSpec tests**: Run `shellspec` from the konflux-data repo root — test cases cover empty/missing files, GA values, EA values, fast values, mixed files, and false-positive cases
 2. **Tekton task**: Validate YAML with `tkn task validate` or `oc apply --dry-run=client`
 3. **Pipeline changes**: Validate with `tkn pipeline validate` or dry-run
-4. **PipelineRun generation**: Run `onboard-product.py` with non-stable configs and verify `stable-release: "false"` appears in generated `.tekton/*.yaml` files; run existing tests with `uv run python -m pytest`
+4. **Live PipelineRun testing**: Create draft MRs in `rhaiis/containers` pointing `pipelineRef.revision` to the unmerged branch, covering four scenarios: stable images (pass), EA refs (fail), fast refs (fail), and `stable-release: "false"` (skip). See test plan in `drafts/aipcc-15422-testing-prompt.md`
+5. **PipelineRun generation**: Run `onboard-product.py` with non-stable configs and verify `stable-release: "false"` appears in generated `.tekton/*.yaml` files; run existing tests with `uv run python -m pytest`
 
 ## Rollout order
 
