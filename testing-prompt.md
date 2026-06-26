@@ -167,15 +167,29 @@ for s in json.load(sys.stdin):
 This gives the PipelineRun name and Konflux UI link directly. The status
 will be `running`, `success`, or `failed`.
 
-Konflux aggressively garbage-collects PipelineRuns, so `oc get pipelineruns`
-may return nothing. If the run has been cleaned up, check kubearchive:
+### Getting task logs
+
+Konflux aggressively garbage-collects PipelineRuns and Pods, so
+`oc get pipelineruns` and `oc logs` will usually return nothing.
+Use kubearchive (`oc ka`) instead — it archives PipelineRuns, TaskRuns,
+Pods, and pod logs.
 
 ```bash
 oc login --web https://api.stone-prod-p02.hjvn.p1.openshiftapps.com:6443
-oc ka get pipelinerun <NAME> -n ai-tenant -o yaml
+
+# 1. Find the assert TaskRun name from the PipelineRun:
+oc ka get pipelinerun <PIPELINERUN_NAME> -n ai-tenant -o yaml \
+  | grep -B2 'pipelineTaskName: assert-all-images-are-stable'
+
+# 2. Find the pod for that TaskRun:
+oc ka get pods -n ai-tenant \
+  -l tekton.dev/taskRun=<TASKRUN_NAME>
+
+# 3. Get the check step's log output:
+oc ka logs <POD_NAME> -n ai-tenant -c step-check
 ```
 
-Or browse the Konflux UI directly:
+The Konflux UI also shows logs (it queries kubearchive behind the scenes):
 https://konflux-ui.apps.stone-prod-p02.hjvn.p1.openshiftapps.com/application-pipeline/workspaces/ai-tenant/applications/rhaiis
 
 ## Wait, then check the CEL expression
