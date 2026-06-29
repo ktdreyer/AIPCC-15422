@@ -1,0 +1,50 @@
+# Generic policy checks for build-args conf files (KEY=VALUE format).
+#
+# Product repos include this template to catch non-stable (EA or "fast")
+# image version references in stable builds. The script reads a version
+# key from each conf file to determine whether EA/fast refs are expected.
+#
+# These checks are deliberately value-only — they don't interpret key
+# names or cross-reference other files. Product-specific consistency
+# checks (e.g. version agreement across bib-*.yaml, config/*.toml, or
+# Konflux artifact refs) belong in per-repo ci-scripts/ instead.
+#
+# Prerequisites:
+#   The consuming repo must define a "checks" stage.
+#
+# Usage:
+#
+#   include:
+#     - project: 'redhat/rhel-ai/ci-cd/toolbox'
+#       file: 'templates/build-args-checks.yml'
+#       inputs:
+#         BUILD_ARGS_GLOB: "build-args/*.conf"
+#         VERSION_KEY: "RHAIIS_VERSION"
+#
+spec:
+  inputs:
+    BUILD_ARGS_GLOB:
+      description: >
+        Glob pattern for build-args conf files to check
+        (e.g. "build-args/*.conf" or "argfile-*.conf").
+    VERSION_KEY:
+      description: >
+        Key name to read from each conf file (e.g. "RHAIIS_VERSION"
+        or "RHELAI_VERSION_ID"). Serves two purposes: (1) identifies
+        container build configs — files without this key are skipped;
+        (2) provides branch-awareness — if the value contains "-EA"
+        or "-fast", non-stable image refs are expected and the check
+        is skipped for that file.
+---
+build-args-checks:
+  stage: checks
+  image: ${TOOLBOX_IMAGE}
+  variables:
+    TOOLBOX_IMAGE: "quay.io/aipcc-cicd/toolbox:latest"
+    VERSION_KEY: "$[[ inputs.VERSION_KEY ]]"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - check-build-args.sh $[[ inputs.BUILD_ARGS_GLOB ]]
+  tags:
+    - aipcc-k8s-cicd
